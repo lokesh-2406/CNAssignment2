@@ -2,6 +2,7 @@
 #include <vector>
 #include <algorithm>
 #include <unordered_set>
+#include <unordered_map>
 #include <fstream>
 
 using namespace omnetpp;
@@ -13,9 +14,19 @@ class TaskMessage : public cMessage {
     int type; // 0=subtask, 1=result, 2=gossip
     std::vector<int> data;
     int result;
+    int gossipOrigin;
+    int gossipHops;
+    std::string gossipId;
     std::string gossip;
 
-    TaskMessage(const char *name=nullptr) : cMessage(name) {}
+    TaskMessage(const char *name=nullptr) : cMessage(name) {
+        src = -1;
+        target = -1;
+        type = -1;
+        result = 0;
+        gossipOrigin = -1;
+        gossipHops = 0;
+    }
 };
 
 class Client : public cSimpleModule {
@@ -23,8 +34,9 @@ class Client : public cSimpleModule {
     int id, N;
     int totalSubtasks = 10;
     int receivedResults = 0;
+        int gossipSequence = 0;
     std::vector<int> results;
-    std::unordered_set<std::string> seenGossip;
+        std::unordered_map<std::string, std::unordered_set<int>> gossipCoverage;
     std::ofstream outfile;
 
   protected:
@@ -34,6 +46,7 @@ class Client : public cSimpleModule {
     void sendSubtasks();
     void forwardMessage(TaskMessage *msg);
     void sendGossip();
+    int getSuccessorGate() const;
 };
 
 Define_Module(Client);
@@ -47,6 +60,24 @@ void Client::initialize() {
     if (id == 0) {
         sendSubtasks();
     }
+}
+
+int Client::getSuccessorGate() const {
+    int successorId = (id + 1) % N;
+
+    for (int i = 0; i < gateSize("out"); i++) {
+        cGate *outGate = gate("out", i);
+        if (outGate->getNextGate() == nullptr) {
+            continue;
+        }
+
+        cModule *nextModule = outGate->getNextGate()->getOwnerModule();
+        if (nextModule->par("id").intValue() == successorId) {
+            return i;
+        }
+    }
+
+    return gateSize("out") > 0 ? 0 : -1;
 }
 
 void Client::sendSubtasks() {
@@ -72,6 +103,49 @@ void Client::sendSubtasks() {
 
 void Client::handleMessage(cMessage *m) {
     TaskMessage *msg = check_and_cast<TaskMessage *>(m);
+
+    if (msg->type == 2) {
+        auto &coveredNodes = gossipCoverage[msg->gossipId];
+        bool coverageExpanded = false;
+
+        for (int nodeId : msg->data) {
+            if (coveredNodes.insert(nodeId).second) {
+                coverageExpanded = true;
+            }
+        }
+
+        if (coveredNodes.insert(id).second) {
+            coverageExpanded = true;
+        }
+
+        if (!coverageExpanded && coveredNodes.size() < static_cast<size_t>(N)) {
+            delete msg;
+            return;
+        }
+
+        std::vector<int> expandedCoverage(coveredNodes.begin(), coveredNodes.end());
+        std::sort(expandedCoverage.begin(), expandedCoverage.end());
+        msg->data = expandedCoverage;
+
+        EV << "Gossip: " << msg->gossip << " | Local Time: " << simTime() << " | From: Node " << msg->src << "\n";
+        outfile << "Gossip: " << msg->gossip << " | Local Time: " << simTime() << " | From: Node " << msg->src << "\n";
+
+        if (coveredNodes.size() == static_cast<size_t>(N)) {
+            EV << "Client " << id << " observed gossip coverage from all clients. Terminating.\n";
+            outfile << "Client " << id << " observed gossip coverage from all clients. Terminating.\n";
+            delete msg;
+            endSimulation();
+            return;
+        }
+
+        int successorGate = getSuccessorGate();
+        if (successorGate >= 0) {
+            send(msg->dup(), "out", successorGate);
+        }
+
+        delete msg;
+        return;
+    }
 
     if (msg->target == id) {
 
@@ -104,17 +178,6 @@ void Client::handleMessage(cMessage *m) {
             }
         }
 
-        else if (msg->type == 2) {
-            if (seenGossip.insert(msg->gossip).second) {
-                EV << "Gossip received: " << msg->gossip << "\n";
-                outfile << "Gossip: " << msg->gossip << "\n";
-
-                for (int i = 0; i < gateSize("out"); i++) {
-                    send(msg->dup(), "out", i);
-                }
-            }
-        }
-
         delete msg;
     }
     else {
@@ -130,14 +193,21 @@ void Client::forwardMessage(TaskMessage *msg) {
 void Client::sendGossip() {
     TaskMessage *msg = new TaskMessage("Gossip");
     msg->type = 2;
+    msg->src = id;
+    msg->target = -1;
+    msg->gossipOrigin = id;
+    msg->gossipHops = 0;
+    msg->gossipId = std::to_string(id) + ":" + std::to_string(++gossipSequence) + ":" + std::to_string(simTime().raw());
 
     std::string g = std::to_string(simTime().dbl()) + ":Node" + std::to_string(id);
     msg->gossip = g;
 
-    seenGossip.insert(g);
+    gossipCoverage[msg->gossipId].insert(id);
+    msg->data = {id};
 
-    for (int i = 0; i < gateSize("out"); i++) {
-        send(msg->dup(), "out", i);
+    int successorGate = getSuccessorGate();
+    if (successorGate >= 0) {
+        send(msg->dup(), "out", successorGate);
     }
 
     delete msg;
