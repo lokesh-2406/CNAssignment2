@@ -1,106 +1,194 @@
-# CNAssignment2
+# CSL3080 Assignment-2 — P2P Task Distribution with Chord Routing
 
-This repository contains an OMNeT++ simulation for distributed program execution with gossip-based score propagation over a ring topology.
+## Overview
 
-## Project Layout
+A peer-to-peer OMNeT++ simulation where N client nodes collaborate to find
+the maximum element of an array using a distributed task model:
 
-```text
-CNAssignment2/
-├── README.md
-├── LICENSE
-├── OmnetProject/
-│   ├── client.cc
-│   ├── client.ned
-│   ├── network.ned
-│   ├── omnetpp.ini
-│   ├── ned_file_generator.py
-│   └── topo.txt
-└── veeraraju-e-distributed-program-execution-8a5edab282632443.txt
+- **Node 0** divides the array into `totalSubtasks` subtasks.
+- Subtask `i` is routed to client `i % N` using **Chord-inspired O(log N) routing**.
+- Each receiving node computes the local maximum and routes the result back to Node 0.
+- Node 0 aggregates all partial results to produce the **global maximum**.
+- Every client then participates in a **flooding-based gossip protocol**.
+  Each node broadcasts a completion message; on first receipt a node forwards
+  it to all neighbours except the sender. Simulation ends when every node
+  has seen gossip from all N clients.
+
+## File Structure
+
+```
+OmnetProject/
+├── client.cc               # Client module logic (Chord routing + gossip)
+├── client.ned              # Module declaration (gates, parameters)
+├── network.ned             # Network topology (auto-generated)
+├── topo.txt                # Edge list (auto-generated, editable)
+├── ned_file_generator.py   # Script to regenerate topology for any N
+├── omnetpp.ini             # Simulation configuration
+├── outputfile.txt          # Output written during simulation (created at runtime)
+└── README.md               # This file
 ```
 
-## What Each File Does
+## Topology: Ring + Chord Fingers
 
-- `OmnetProject/client.cc` implements the client behavior, task forwarding, result collection, and gossip propagation.
-- `OmnetProject/client.ned` declares the client module interface.
-- `OmnetProject/network.ned` defines the client ring network.
-- `OmnetProject/omnetpp.ini` selects the network and simulation parameters.
-- `OmnetProject/ned_file_generator.py` regenerates the ring topology artifacts.
-- `OmnetProject/topo.txt` stores the generated `source target` ring edges.
+For N nodes the simulator establishes:
+- **Ring edges**: each node connects to its clockwise successor.
+- **Chord finger edges**: for each node `i` and each `k` in `1 … floor(log2(N-1))`,
+  an extra edge to `(i + 2^k) % N`.
 
-## Requirements
+This gives O(log N) routing depth — messages reach any target in at most
+`ceil(log2 N)` hops.
 
-- OMNeT++ 6.x installed and configured.
-- Python 3 available on the command line.
-- A terminal or OMNeT++ IDE session with the OMNeT++ environment activated.
+To change N, regenerate the topology files (see §Changing N below).
 
-## Step-by-Step Execution
+---
 
-### 1. Open the project folder
+## Prerequisites
 
-From a terminal, go to the OMNeT++ project directory:
+| Tool | Version |
+|------|---------|
+| OMNeT++ | 6.x (tested with 6.0.3) |
+| Python | 3.8+ (for ned_file_generator.py) |
+| OS | Windows (IDE), Linux/WSL (opp_env or native) |
 
-```powershell
-cd "d:\MyStuff\College\.6thSemester\CN\Assignment2\CNAssignment2\OmnetProject"
+---
+
+## Running in the OMNeT++ IDE (Recommended)
+
+### 1 — Import the project
+
+1. Open OMNeT++ IDE.
+2. **File → Import → General → Existing Projects into Workspace**.
+3. Browse to the `OmnetProject/` folder and click **Finish**.
+
+### 2 — Build
+
+1. Right-click the project in the **Project Explorer** → **Build Project**.
+2. Confirm there are no errors in the **Problems** tab.
+
+### 3 — Run
+
+1. Right-click `omnetpp.ini` → **Run As → OMNeT++ Simulation**.
+2. In the run dialog choose **qtenv** (GUI) or **cmdenv** (console).
+3. Press the **Run** (▶) button or use **Run → Run** from the menu.
+
+### 4 — View output
+
+- Console output appears in the **OMNeT++ Log** pane.
+- `outputfile.txt` is written to the project root directory.
+
+---
+
+## Running from the Terminal (WSL / opp_env / native Linux)
+
+### 1 — Set up environment
+
+```bash
+# If using opp_env:
+opp_env shell omnetpp-6.0.3   # or whichever version you have
+
+# Native install — source the environment script:
+source /path/to/omnetpp-6.x/setenv
 ```
 
-### 2. Regenerate the topology files
+### 2 — Compile
 
-This repository keeps the client network as a ring. Regenerate `topo.txt` and `network.ned` from the helper script if you change `N`:
-
-```powershell
-python ned_file_generator.py -n 5 --output-dir .
+```bash
+cd OmnetProject/
+opp_makemake -f --deep          # generate Makefile (first time only)
+make -j$(nproc)
 ```
 
-If you want a different number of clients, change `-n` to the desired value.
+### 3 — Run (command-line mode)
 
-### 3. Build the OMNeT++ project
-
-If you are using the OMNeT++ IDE, build the project from the IDE after importing it.
-
-If you are building from the command line and the makefile has already been generated, run:
-
-```powershell
-make
+```bash
+./OmnetProject -u Cmdenv -f omnetpp.ini
 ```
 
-If the makefile does not exist yet, generate it with the OMNeT++ build tool first, then run `make`:
+Or with explicit network:
 
-```powershell
-opp_makemake -f --deep
-make
+```bash
+./OmnetProject -u Cmdenv -f omnetpp.ini -n . P2PNetwork
 ```
 
-### 4. Run the simulation
+---
 
-Launch the simulation with the INI file:
+## Changing N (Number of Clients)
 
-```powershell
-opp_run -u Qtenv -f omnetpp.ini
+**Step 1** — Regenerate topology files:
+
+```bash
+python3 ned_file_generator.py -n 8          # change 8 to desired N
 ```
 
-If you want a console-only run instead of the GUI, use:
+This overwrites `topo.txt` and `network.ned`.
 
-```powershell
-opp_run -u Cmdenv -f omnetpp.ini
+**Step 2** — Update `omnetpp.ini`:
+
+```ini
+*.client[*].N = 8        # must match the value used in step 1
 ```
 
-### 5. Inspect the output
+**Step 3** — Rebuild (IDE: Build Project | Terminal: `make -j$(nproc)`) and run.
 
-- Simulation logs are written to the OMNeT++ event log and the text output files created by the client module.
-- Gossip propagation is logged with the sender node, local simulation time, and the gossip payload.
-- Task results are accumulated until all subtasks complete, then gossip starts.
+> **Note**: You are allowed to edit `topo.txt` without recompiling.
+> However, `network.ned` must also be regenerated (it encodes the connections),
+> and `omnetpp.ini` must reflect the new N. Only `client.cc` must not be changed
+> to avoid the submission penalty.
 
-## Simulation Flow
+---
 
-1. The simulation starts from `omnetpp.ini`.
-2. `network.ned` instantiates `N` clients in a ring.
-3. `client.cc` sends the initial subtasks from client `0`.
-4. Results are forwarded back to the requester and aggregated.
-5. When all subtasks complete, client `0` starts gossip dissemination.
-6. Gossip is forwarded along the ring until every client has seen it.
+## Changing Number of Subtasks
 
-## Notes
+Edit `omnetpp.ini`:
 
-- The topology generator writes both `topo.txt` and `network.ned` so the checked-in topology stays aligned with the simulation parameters.
-- If you change the number of nodes, regenerate the topology before rebuilding and rerunning the simulation.
-- The current configuration uses a 5-node ring by default.
+```ini
+*.client[*].totalSubtasks = 20    # must be > N; each chunk will have ≥ 2 elements
+```
+
+---
+
+## Output Format
+
+`outputfile.txt` and the console will show:
+
+```
+=== Simulation Output ===
+Node 0 generated array for task distribution.
+Node 2 processed subtask | local max = 87
+Node 0 received subtask result: 87 (1/10)
+...
+=== FINAL MAX (Node 0): 95 ===
+Node 0 sent gossip: 4.32:0:Client0#
+[GOSSIP] Node 3 | Time: 4.45 | From gate: 1 | Originator: Node 0 | Msg: 4.32:0:Client0#
+...
+Node 3 received gossip from all 5 clients. Terminating.
+```
+
+Gossip message format (matches assignment spec):
+```
+<simTime>:<nodeId>:Client<id>#
+```
+
+---
+
+## Routing Algorithm (Chord O(log N))
+
+Each node builds a **finger table** at startup:
+
+```
+finger[k] = (id + 2^k) % N,  for k = 0 … floor(log2(N-1))
+```
+
+When forwarding a message toward `target`, the node picks the finger that
+advances it furthest clockwise toward `target` without overshooting.
+This guarantees delivery in at most ⌈log₂ N⌉ hops.
+
+---
+
+## Gossip Protocol
+
+1. After completing its task, a node floods its gossip to **all connected neighbours**.
+2. On first receipt of a gossip ID, a node logs it and forwards to all neighbours
+   **except** the gate it arrived on.
+3. Duplicate gossip IDs are silently dropped.
+4. When a node has seen gossip from all N originators, it calls `endSimulation()`.
