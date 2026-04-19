@@ -1,0 +1,16 @@
+=== Simulation Output ===
+Node 0 generated array for task distribution.
+Node 0 processed subtask (self) | local max = 48
+Node 0 processed subtask (self) | local max = 89
+Node 0 received subtask result: 48 (1/10)
+Node 0 received subtask result: 89 (2/10)
+Node 0 received subtask result: 68 (3/10)
+Node 0 received subtask result: 68 (4/10)
+Node 0 received subtask result: 84 (5/10)
+Node 0 received subtask result: 88 (6/10)
+Node 0 received subtask result: 89 (7/10)
+Node 0 received subtask result: 66 (8/10)
+Node 0 received subtask result: 88 (9/10)
+Node 0 received subtask result: 89 (10/10)
+=== FINAL MAX (Node 0): 89 ===
+Node 0 sent gossip: 0:0:Client0#
